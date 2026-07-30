@@ -1,4 +1,4 @@
-# drainage_lcp
+# FloGravity
 
 Hydraulically-constrained least-cost path for a gravity-fed drainage channel
 or pipe, over an arbitrary DEM.
