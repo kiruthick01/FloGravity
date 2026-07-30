@@ -95,6 +95,11 @@ export default function CesiumGlobe({
         viewer.scene.skyAtmosphere.show = true;
       }
 
+      // The globe is a fixed, viewport-filling background layer sitting under real
+      // page content, so mouse-wheel scroll needs to scroll the page -- not zoom the
+      // camera (Cesium's default). Left-drag-to-rotate stays on.
+      viewer.scene.screenSpaceCameraController.enableZoom = false;
+
       viewer.camera.setView({
         destination: Cesium.Cartesian3.fromDegrees(12, 18, 22_000_000),
       });

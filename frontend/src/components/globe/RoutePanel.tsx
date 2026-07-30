@@ -1,26 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import type { LonLat, RouteParams, RouteResult } from "./types";
-
-type RunState =
-  | { phase: "idle" }
-  | { phase: "loading" }
-  | { phase: "error"; message: string }
-  | { phase: "done"; result: RouteResult };
-
-interface ControlPanelProps {
-  onSearchSubmit: (query: string) => void;
-  searchNotFound: boolean;
-  pickMode: "start" | "end" | null;
-  onSetPickMode: (mode: "start" | "end" | null) => void;
-  startPoint: LonLat | null;
-  endPoint: LonLat | null;
-  params: RouteParams;
-  onParamsChange: (params: RouteParams) => void;
-  runState: RunState;
-  onRun: () => void;
-}
+import { useRouteTool } from "./RouteToolContext";
+import type { LonLat } from "./types";
 
 function formatLonLat(p: LonLat) {
   return `${p.lat.toFixed(3)}°, ${p.lon.toFixed(3)}°`;
@@ -57,32 +39,37 @@ function NumberField({
   );
 }
 
-export default function ControlPanel({
-  onSearchSubmit,
-  searchNotFound,
-  pickMode,
-  onSetPickMode,
-  startPoint,
-  endPoint,
-  params,
-  onParamsChange,
-  runState,
-  onRun,
-}: ControlPanelProps) {
+// Rendered in normal document flow right after the hero's CTA row -- not a
+// fixed floating overlay, so it never competes with the globe or the headline
+// for the same screen real estate.
+export default function RoutePanel() {
+  const {
+    handleSearchSubmit,
+    searchNotFound,
+    pickMode,
+    setPickMode,
+    startPoint,
+    endPoint,
+    params,
+    setParams,
+    runState,
+    handleRun,
+  } = useRouteTool();
+
   const [searchValue, setSearchValue] = useState("");
   const bothPointsSet = Boolean(startPoint && endPoint);
 
   return (
     <div
       id="route"
-      className="pointer-events-auto fixed bottom-6 right-6 z-20 w-[min(90vw,380px)] space-y-4 rounded-2xl border border-white/10 bg-black/50 p-5 text-sm backdrop-blur-md"
+      className="pointer-events-auto mt-12 w-full max-w-md space-y-3 rounded-2xl border border-white/10 bg-black/50 p-4 text-sm backdrop-blur-md"
     >
       <div>
-        <p className="mb-2 text-xs uppercase tracking-[0.15em] text-muted">Search a place</p>
+        <p className="mb-1.5 text-xs uppercase tracking-[0.15em] text-muted">Search a place</p>
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            onSearchSubmit(searchValue);
+            handleSearchSubmit(searchValue);
           }}
           className="flex gap-2"
         >
@@ -110,7 +97,7 @@ export default function ControlPanel({
 
         <button
           type="button"
-          onClick={() => onSetPickMode(pickMode === "start" ? null : "start")}
+          onClick={() => setPickMode(pickMode === "start" ? null : "start")}
           className={`flex w-full items-center justify-between rounded-md border px-3 py-2 text-left text-xs transition-colors ${
             pickMode === "start"
               ? "border-[#7CFFB2]/60 bg-[#7CFFB2]/10"
@@ -128,7 +115,7 @@ export default function ControlPanel({
 
         <button
           type="button"
-          onClick={() => onSetPickMode(pickMode === "end" ? null : "end")}
+          onClick={() => setPickMode(pickMode === "end" ? null : "end")}
           className={`flex w-full items-center justify-between rounded-md border px-3 py-2 text-left text-xs transition-colors ${
             pickMode === "end"
               ? "border-[#F2617A]/60 bg-[#F2617A]/10"
@@ -146,39 +133,37 @@ export default function ControlPanel({
       </div>
 
       <details className="border-t border-white/10 pt-4">
-        <summary className="cursor-pointer text-xs uppercase tracking-[0.15em] text-muted">
-          Parameters
-        </summary>
+        <summary className="cursor-pointer text-xs uppercase tracking-[0.15em] text-muted">Parameters</summary>
         <div className="mt-3 space-y-2">
           <NumberField
             label="Min slope %"
             value={params.minSlopePct}
-            onChange={(v) => onParamsChange({ ...params, minSlopePct: v })}
+            onChange={(v) => setParams({ ...params, minSlopePct: v })}
           />
           <NumberField
             label="Max slope %"
             value={params.maxSlopePct}
-            onChange={(v) => onParamsChange({ ...params, maxSlopePct: v })}
+            onChange={(v) => setParams({ ...params, maxSlopePct: v })}
           />
           <NumberField
             label="Hard max slope %"
             value={params.hardMaxSlopePct}
-            onChange={(v) => onParamsChange({ ...params, hardMaxSlopePct: v })}
+            onChange={(v) => setParams({ ...params, hardMaxSlopePct: v })}
           />
           <NumberField
             label="Slope weight"
             value={params.wSlope}
-            onChange={(v) => onParamsChange({ ...params, wSlope: v })}
+            onChange={(v) => setParams({ ...params, wSlope: v })}
           />
           <NumberField
             label="Channel weight"
             value={params.wChannel}
-            onChange={(v) => onParamsChange({ ...params, wChannel: v })}
+            onChange={(v) => setParams({ ...params, wChannel: v })}
           />
           <NumberField
             label="Direction weight"
             value={params.wDirection}
-            onChange={(v) => onParamsChange({ ...params, wDirection: v })}
+            onChange={(v) => setParams({ ...params, wDirection: v })}
           />
           <div className="flex items-center justify-between text-xs">
             <span className="text-muted">Mode</span>
@@ -187,10 +172,8 @@ export default function ControlPanel({
                 <button
                   key={mode}
                   type="button"
-                  onClick={() => onParamsChange({ ...params, mode })}
-                  className={`px-2 py-1 ${
-                    params.mode === mode ? "bg-white/20" : "bg-transparent hover:bg-white/10"
-                  }`}
+                  onClick={() => setParams({ ...params, mode })}
+                  className={`px-2 py-1 ${params.mode === mode ? "bg-white/20" : "bg-transparent hover:bg-white/10"}`}
                 >
                   {mode}
                 </button>
@@ -204,15 +187,13 @@ export default function ControlPanel({
         <button
           type="button"
           disabled={!bothPointsSet || runState.phase === "loading"}
-          onClick={onRun}
+          onClick={handleRun}
           className="w-full rounded-full bg-foreground px-4 py-2.5 text-sm font-medium text-background transition-opacity hover:opacity-85 disabled:cursor-not-allowed disabled:opacity-30"
         >
           {runState.phase === "loading" ? "Computing route…" : "Compute route"}
         </button>
 
-        {runState.phase === "error" && (
-          <p className="mt-2 text-xs text-red-400">{runState.message}</p>
-        )}
+        {runState.phase === "error" && <p className="mt-2 text-xs text-red-400">{runState.message}</p>}
 
         {runState.phase === "done" && (
           <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">

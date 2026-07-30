@@ -1,37 +1,42 @@
 "use client";
 
-import dynamic from "next/dynamic";
-import { useCallback, useState, useSyncExternalStore } from "react";
-import { createPortal } from "react-dom";
-import ControlPanel from "./ControlPanel";
+import { createContext, useCallback, useContext, useState } from "react";
 import type { LonLat, RouteParams, RouteResult } from "./types";
 import { DEFAULT_ROUTE_PARAMS } from "./types";
 
-// Cesium touches window/WebGL at import time, so it can only run in the browser.
-const CesiumGlobe = dynamic(() => import("./CesiumGlobe"), {
-  ssr: false,
-  loading: () => (
-    <div className="flex h-full w-full items-center justify-center text-sm text-neutral-500">
-      Loading globe…
-    </div>
-  ),
-});
-
-// Portal needs document.body, which doesn't exist during SSR. useSyncExternalStore's
-// server/client snapshot split gives us "has hydration finished" without an
-// effect+setState (which would trigger an extra render pass).
-const noopSubscribe = () => () => {};
-const getClientSnapshot = () => true;
-const getServerSnapshot = () => false;
-
-type PickMode = "start" | "end" | null;
-type RunState =
+export type PickMode = "start" | "end" | null;
+export type RunState =
   | { phase: "idle" }
   | { phase: "loading" }
   | { phase: "error"; message: string }
   | { phase: "done"; result: RouteResult };
 
-export default function GlobeCanvas() {
+interface RouteToolState {
+  searchQuery: string | null;
+  searchNonce: number;
+  searchNotFound: boolean;
+  handleSearchSubmit: (query: string) => void;
+  handleSearchResult: (result: { found: boolean }) => void;
+
+  pickMode: PickMode;
+  setPickMode: (mode: PickMode) => void;
+  startPoint: LonLat | null;
+  endPoint: LonLat | null;
+  handlePick: (point: LonLat) => void;
+
+  params: RouteParams;
+  setParams: (params: RouteParams) => void;
+  runState: RunState;
+  handleRun: () => void;
+}
+
+const RouteToolCtx = createContext<RouteToolState | null>(null);
+
+// Shared between GlobeBackground (the fixed, viewport-filling Cesium canvas) and
+// RoutePanel (a normal-flow block placed wherever the page layout wants it) --
+// they live in completely different parts of the DOM, so plain prop drilling
+// from one shared parent isn't an option.
+export function RouteToolProvider({ children }: { children: React.ReactNode }) {
   const [searchQuery, setSearchQuery] = useState<string | null>(null);
   const [searchNonce, setSearchNonce] = useState(0);
   const [searchNotFound, setSearchNotFound] = useState(false);
@@ -42,12 +47,6 @@ export default function GlobeCanvas() {
 
   const [params, setParams] = useState<RouteParams>(DEFAULT_ROUTE_PARAMS);
   const [runState, setRunState] = useState<RunState>({ phase: "idle" });
-
-  // The globe's off-center hero placement uses a CSS transform, which makes
-  // any `position: fixed` descendant relative to that transformed ancestor
-  // instead of the viewport. Portal the panel straight to <body> to escape it,
-  // once hydration has actually finished (document.body isn't available server-side).
-  const mounted = useSyncExternalStore(noopSubscribe, getClientSnapshot, getServerSnapshot);
 
   const handleSearchSubmit = useCallback((query: string) => {
     if (!query.trim()) return;
@@ -110,44 +109,33 @@ export default function GlobeCanvas() {
     } catch (err) {
       setRunState({
         phase: "error",
-        message:
-          err instanceof Error
-            ? err.message
-            : "Couldn't reach the routing backend.",
+        message: err instanceof Error ? err.message : "Couldn't reach the routing backend.",
       });
     }
   }, [startPoint, endPoint, params]);
 
-  return (
-    <>
-      <div className="pointer-events-auto h-full w-full">
-        <CesiumGlobe
-          searchQuery={searchQuery}
-          searchNonce={searchNonce}
-          onSearchResult={handleSearchResult}
-          pickMode={pickMode}
-          onPick={handlePick}
-          startPoint={startPoint}
-          endPoint={endPoint}
-          pathCoordinates={runState.phase === "done" ? runState.result.path : null}
-        />
-      </div>
-      {mounted &&
-        createPortal(
-          <ControlPanel
-            onSearchSubmit={handleSearchSubmit}
-            searchNotFound={searchNotFound}
-            pickMode={pickMode}
-            onSetPickMode={setPickMode}
-            startPoint={startPoint}
-            endPoint={endPoint}
-            params={params}
-            onParamsChange={setParams}
-            runState={runState}
-            onRun={handleRun}
-          />,
-          document.body
-        )}
-    </>
-  );
+  const value: RouteToolState = {
+    searchQuery,
+    searchNonce,
+    searchNotFound,
+    handleSearchSubmit,
+    handleSearchResult,
+    pickMode,
+    setPickMode,
+    startPoint,
+    endPoint,
+    handlePick,
+    params,
+    setParams,
+    runState,
+    handleRun,
+  };
+
+  return <RouteToolCtx.Provider value={value}>{children}</RouteToolCtx.Provider>;
+}
+
+export function useRouteTool() {
+  const ctx = useContext(RouteToolCtx);
+  if (!ctx) throw new Error("useRouteTool must be used within a RouteToolProvider");
+  return ctx;
 }
