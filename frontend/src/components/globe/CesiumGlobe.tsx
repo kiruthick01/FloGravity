@@ -89,7 +89,9 @@ export default function CesiumGlobe({
       viewerRef.current = viewer;
       geocoderRef.current = new Cesium.IonGeocoderService({ scene: viewer.scene });
 
-      viewer.scene.globe.enableLighting = true;
+      // Sun-based day/night lighting looks realistic but leaves half the globe
+      // permanently dark for a product UI where every location should read clearly.
+      viewer.scene.globe.enableLighting = false;
       viewer.scene.globe.depthTestAgainstTerrain = true;
       if (viewer.scene.skyAtmosphere) {
         viewer.scene.skyAtmosphere.show = true;

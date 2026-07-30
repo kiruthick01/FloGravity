@@ -1,8 +1,9 @@
 """Phase 5: anisotropic (directional) least-cost routing.
 
-Upgrades the Phase 4 isotropic cost surface with a per-edge penalty for
-crossing a flow channel perpendicular to its direction, so the route can
-express "cheap to run alongside a channel, costly to cross it head-on."
+Upgrades the Phase 4 isotropic cost surface two ways: a per-edge directional
+grade check (does this specific step actually go downhill enough for gravity
+flow, not just "is this cell steep in general") and a penalty for crossing a
+flow channel perpendicular to its direction.
 """
 
 import heapq
@@ -34,25 +35,64 @@ def _alignment(travel_bearing, flow_bearing):
     return abs(math.cos(math.radians(travel_bearing - flow_bearing)))
 
 
-def route_anisotropic(total_cost, fdir, channel_penalty, start_rc, end_rc, w_direction=0.2):
-    """Dijkstra over an 8-connected directed graph with a channel-crossing penalty.
+def _edge_grade_penalty(grade_pct, min_slope_pct, max_slope_pct, hard_max_slope_pct):
+    """0 inside the [min, max] downhill-grade band, IMPASSABLE_COST beyond hard max.
 
-    edge_cost(u, v) = total_cost[v] * direction_factor * step_distance. The
-    step_distance term (1 or sqrt(2)) is not in the original formula but is
-    necessary: without it, diagonal steps cover more ground per unit cost than
-    orthogonal ones, and Dijkstra will zigzag diagonally to exploit that.
+    grade_pct > 0 means v is downhill of u (elevation actually drops in the
+    direction of travel); grade_pct <= 0 means flat or uphill, which gravity
+    flow can't use at all -- penalized more steeply than a merely-too-flat
+    downhill step, but not forbidden outright, so a short uphill blip around
+    a local pit doesn't make the whole DEM unroutable.
+    """
+    if min_slope_pct <= grade_pct <= max_slope_pct:
+        return 0.0
+    if grade_pct > max_slope_pct:
+        if grade_pct > hard_max_slope_pct:
+            return IMPASSABLE_COST
+        return (grade_pct - max_slope_pct) / (hard_max_slope_pct - max_slope_pct)
+    deficit = min_slope_pct - grade_pct
+    return deficit / max(min_slope_pct, 1e-6)
+
+
+def route_anisotropic(
+    elevation,
+    pixel_size_m,
+    fdir,
+    channel_penalty,
+    nodata_mask,
+    start_rc,
+    end_rc,
+    min_slope_pct=0.5,
+    max_slope_pct=15.0,
+    hard_max_slope_pct=45.0,
+    w_slope=0.5,
+    w_channel=0.3,
+    w_direction=0.2,
+    base_cost=1.0,
+):
+    """Dijkstra over an 8-connected directed graph.
+
+    edge_cost(u, v) = (base_cost + w_slope*grade_penalty(u,v) + w_channel*channel_penalty(v))
+                      * direction_factor * step_distance
+
+    grade_penalty is computed from the actual elevation drop from u to v over
+    that step's real distance -- a directional quantity, unlike Phase 4's
+    isotropic per-cell slope magnitude -- so a step that doesn't lose enough
+    elevation in the direction of travel is penalized even if the destination
+    cell's terrain isn't "steep" in an absolute sense. direction_factor still
+    penalizes crossing a channel perpendicular to its flow direction.
 
     Returns (path, total_cost_of_path); path is a list of (row, col) tuples.
     """
-    nrows, ncols = total_cost.shape
+    nrows, ncols = elevation.shape
     start = (int(start_rc[0]), int(start_rc[1]))
     end = (int(end_rc[0]), int(end_rc[1]))
 
     for label, rc in (("start", start), ("end", end)):
         if not (0 <= rc[0] < nrows and 0 <= rc[1] < ncols):
-            raise ValueError(f"{label} point {rc} is outside the grid {total_cost.shape}")
-        if total_cost[rc] >= IMPASSABLE_COST:
-            raise ValueError(f"{label} point {rc} sits on an impassable (nodata/hard-max-slope) cell")
+            raise ValueError(f"{label} point {rc} is outside the grid {elevation.shape}")
+        if nodata_mask[rc]:
+            raise ValueError(f"{label} point {rc} sits on a nodata cell")
 
     dist = np.full((nrows, ncols), np.inf, dtype=np.float64)
     dist[start] = 0.0
@@ -74,11 +114,13 @@ def route_anisotropic(total_cost, fdir, channel_penalty, start_rc, end_rc, w_dir
             if not (0 <= vr < nrows and 0 <= vc < ncols):
                 continue
             v = (vr, vc)
-            if visited[v]:
+            if visited[v] or nodata_mask[v]:
                 continue
 
-            v_cost = total_cost[v]
-            if v_cost >= IMPASSABLE_COST:
+            step_dist_m = step_dist * pixel_size_m
+            grade_pct = 100.0 * (float(elevation[u]) - float(elevation[v])) / step_dist_m
+            slope_pen = _edge_grade_penalty(grade_pct, min_slope_pct, max_slope_pct, hard_max_slope_pct)
+            if slope_pen >= IMPASSABLE_COST:
                 continue
 
             flow_bearing = FDIR_TO_BEARING.get(int(fdir[v]))
@@ -88,7 +130,8 @@ def route_anisotropic(total_cost, fdir, channel_penalty, start_rc, end_rc, w_dir
             chan_pen = 0.0 if np.isnan(chan_pen) else chan_pen
             direction_factor = 1.0 + w_direction * (1.0 - alignment) * chan_pen
 
-            new_dist = d + v_cost * direction_factor * step_dist
+            edge_cost = (base_cost + w_slope * slope_pen + w_channel * chan_pen) * direction_factor
+            new_dist = d + edge_cost * step_dist
             if new_dist < dist[v]:
                 dist[v] = new_dist
                 prev[v] = u
@@ -125,13 +168,10 @@ if __name__ == "__main__":
     # is specifically meant to handle differently.
     start_rc = (200, 250)
     end_rc = (200, 320)
-    # w_direction=0.2 (the CLI default) barely moves this particular path;
-    # cranked up here purely to make the divergence obvious in this demo plot.
-    w_direction_demo = 3.0
 
     iso_path, iso_cost = route_isotropic(total_cost, start_rc, end_rc)
     aniso_path, aniso_cost = route_anisotropic(
-        total_cost, fdir_arr, channel_pen, start_rc, end_rc, w_direction=w_direction_demo
+        elevation, pixel_size_m, fdir_arr, channel_pen, nodata_mask, start_rc, end_rc
     )
 
     iso_set = set(iso_path)

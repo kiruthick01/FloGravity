@@ -142,7 +142,21 @@ def run_pipeline(
     if mode == "isotropic":
         path, path_cost = route_isotropic(total_cost, start_rc, end_rc)
     else:
-        path, path_cost = route_anisotropic(total_cost, fdir_arr, channel_pen, start_rc, end_rc, w_direction=w_direction)
+        path, path_cost = route_anisotropic(
+            elevation,
+            pixel_size_m,
+            fdir_arr,
+            channel_pen,
+            nodata_mask,
+            start_rc,
+            end_rc,
+            min_slope_pct=min_slope_pct,
+            max_slope_pct=max_slope_pct,
+            hard_max_slope_pct=hard_max_slope_pct,
+            w_slope=w_slope,
+            w_channel=w_channel,
+            w_direction=w_direction,
+        )
 
     path_lonlat, length_m = _path_to_lonlat(path, transform, crs)
 
