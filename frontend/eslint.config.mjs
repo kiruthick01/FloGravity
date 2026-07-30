@@ -12,6 +12,10 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // This array replaces ESLint's own defaults (which include node_modules),
+    // so it has to be listed explicitly or the whole dependency tree gets linted.
+    "node_modules/**",
+    "public/**",
   ]),
 ]);
 
