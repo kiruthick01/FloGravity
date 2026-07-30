@@ -8,16 +8,9 @@ from pathlib import Path
 
 import numpy as np
 import rasterio
-from pyproj import Transformer
 
-from drainage_lcp.cost_surface import IMPASSABLE_COST, compute_total_cost, route_isotropic
-from drainage_lcp.dem_io import load_dem
-from drainage_lcp.hydrology import compute_hydrology
-from drainage_lcp.routing import FDIR_TO_BEARING, route_anisotropic
-from drainage_lcp.terrain import compute_aspect, compute_slope
-
-SIGNIFICANT_CHANNEL_THRESHOLD = 0.5
-PERPENDICULAR_ALIGNMENT_THRESHOLD = 0.5
+from drainage_lcp.pipeline import run_pipeline
+from drainage_lcp.terrain import compute_aspect
 
 
 def _normalize_argv(argv):
@@ -71,42 +64,6 @@ def _parse_lonlat(text, label):
         raise ValueError(f"--{label} must be numeric 'lon,lat', got {text!r}") from exc
 
 
-def lonlat_to_pixel(lon, lat, dem_crs, transform, shape, label):
-    transformer = Transformer.from_crs("EPSG:4326", dem_crs, always_xy=True)
-    x, y = transformer.transform(lon, lat)
-    row, col = rasterio.transform.rowcol(transform, x, y)
-    nrows, ncols = shape
-    if not (0 <= row < nrows and 0 <= col < ncols):
-        raise ValueError(
-            f"{label} point (lon={lon}, lat={lat}) falls outside the DEM extent "
-            f"(maps to pixel {row},{col}, grid is {shape})"
-        )
-    return int(row), int(col)
-
-
-def _step_bearing(dr, dc):
-    return math.degrees(math.atan2(dc, -dr)) % 360.0
-
-
-def _alignment(travel_bearing, flow_bearing):
-    return abs(math.cos(math.radians(travel_bearing - flow_bearing)))
-
-
-def _path_diagnostics(path, fdir_arr, channel_pen):
-    """Per-step alignment with local flow direction, for the channel-crossing count."""
-    crossings = 0
-    for (r0, c0), (r1, c1) in zip(path[:-1], path[1:]):
-        flow_bearing = FDIR_TO_BEARING.get(int(fdir_arr[r1, c1]))
-        if flow_bearing is None:
-            continue
-        travel_bearing = _step_bearing(r1 - r0, c1 - c0)
-        alignment = _alignment(travel_bearing, flow_bearing)
-        chan_pen = channel_pen[r1, c1]
-        if not np.isnan(chan_pen) and chan_pen > SIGNIFICANT_CHANNEL_THRESHOLD and alignment < PERPENDICULAR_ALIGNMENT_THRESHOLD:
-            crossings += 1
-    return crossings
-
-
 def _hillshade(slope_deg, aspect_deg, azimuth_deg=315.0, altitude_deg=45.0):
     az = math.radians(azimuth_deg)
     alt = math.radians(altitude_deg)
@@ -116,23 +73,20 @@ def _hillshade(slope_deg, aspect_deg, azimuth_deg=315.0, altitude_deg=45.0):
     return np.clip(shade, 0.0, 1.0)
 
 
-def _write_geojson(path_rc, transform, working_crs, original_crs, out_path):
-    xs, ys = [], []
-    for row, col in path_rc:
-        x, y = rasterio.transform.xy(transform, row, col)
-        xs.append(x)
-        ys.append(y)
-
-    length_m = float(np.sum(np.hypot(np.diff(xs), np.diff(ys))))
-
+def _write_geojson(path_lonlat, length_m, original_crs, working_crs, out_path):
     if original_crs is not None and original_crs != working_crs:
-        transformer = Transformer.from_crs(working_crs, original_crs, always_xy=True)
-        xs, ys = transformer.transform(xs, ys)
+        from pyproj import Transformer
+
+        transformer = Transformer.from_crs("EPSG:4326", original_crs, always_xy=True)
+        lons = [p[0] for p in path_lonlat]
+        lats = [p[1] for p in path_lonlat]
+        xs, ys = transformer.transform(lons, lats)
+        coords = [[float(x), float(y)] for x, y in zip(xs, ys)]
         out_crs = original_crs
     else:
+        coords = path_lonlat
         out_crs = working_crs
 
-    coords = [[float(x), float(y)] for x, y in zip(xs, ys)]
     geojson = {
         "type": "FeatureCollection",
         "crs": {"type": "name", "properties": {"name": out_crs.to_string()}},
@@ -145,7 +99,6 @@ def _write_geojson(path_rc, transform, working_crs, original_crs, out_path):
         ],
     }
     out_path.write_text(json.dumps(geojson, indent=2))
-    return length_m
 
 
 def _write_cost_surface_plot(elevation, slope_deg, slope_pct, acc_arr, path_rc, out_path):
@@ -199,17 +152,17 @@ def _write_profile_plot(elevation, slope_pct, path_rc, transform, out_path):
     plt.close(fig)
 
 
-def _write_report(out_path, mode, length_m, path_cost, slope_profile, crossings, elevation_drop, args):
+def _write_report(out_path, mode, result, args):
     lines = [
         "# Drainage Least-Cost Path Report",
         "",
         f"- Mode: {mode}",
-        f"- Path length: {length_m:.1f} m",
-        f"- Total accumulated cost: {path_cost:.2f}",
-        f"- Slope % along path: min {np.nanmin(slope_profile):.2f} / "
-        f"mean {np.nanmean(slope_profile):.2f} / max {np.nanmax(slope_profile):.2f}",
-        f"- Significant channel crossings: {crossings}",
-        f"- Total elevation drop (start - end): {elevation_drop:.1f} m",
+        f"- Path length: {result.length_m:.1f} m",
+        f"- Total accumulated cost: {result.cost:.2f}",
+        f"- Slope % along path: min {result.slope_min:.2f} / "
+        f"mean {result.slope_mean:.2f} / max {result.slope_max:.2f}",
+        f"- Significant channel crossings: {result.significant_channel_crossings}",
+        f"- Total elevation drop (start - end): {result.elevation_drop_m:.1f} m",
         "",
         "## Parameters",
         "",
@@ -223,57 +176,36 @@ def main(argv=None):
     args = parse_args(argv)
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    with rasterio.open(args.dem) as src:
-        original_crs = src.crs
+    start_lon, start_lat = _parse_lonlat(args.start, "start")
+    end_lon, end_lat = _parse_lonlat(args.end, "end")
 
-    elevation, transform, crs, nodata_mask, pixel_size_m = load_dem(args.dem)
-    slope_deg, slope_pct = compute_slope(elevation, pixel_size_m, nodata_mask)
-    fdir_arr, acc_arr = compute_hydrology(elevation, transform, crs, nodata_mask)
-    total_cost, channel_pen = compute_total_cost(
-        slope_pct,
-        acc_arr,
-        nodata_mask,
+    result = run_pipeline(
+        args.dem,
+        (start_lon, start_lat),
+        (end_lon, end_lat),
         min_slope_pct=args.min_slope_pct,
         max_slope_pct=args.max_slope_pct,
         hard_max_slope_pct=args.hard_max_slope_pct,
         w_slope=args.w_slope,
         w_channel=args.w_channel,
+        w_direction=args.w_direction,
+        mode=args.mode,
     )
 
-    start_lon, start_lat = _parse_lonlat(args.start, "start")
-    end_lon, end_lat = _parse_lonlat(args.end, "end")
-    start_rc = lonlat_to_pixel(start_lon, start_lat, crs, transform, elevation.shape, "start")
-    end_rc = lonlat_to_pixel(end_lon, end_lat, crs, transform, elevation.shape, "end")
-
-    for label, rc in (("start", start_rc), ("end", end_rc)):
-        if total_cost[rc] >= IMPASSABLE_COST:
-            raise ValueError(f"{label} point {rc} sits on an impassable (nodata/hard-max-slope) cell")
-
-    if args.mode == "isotropic":
-        path, path_cost = route_isotropic(total_cost, start_rc, end_rc)
-    else:
-        path, path_cost = route_anisotropic(
-            total_cost, fdir_arr, channel_pen, start_rc, end_rc, w_direction=args.w_direction
-        )
-
-    length_m = _write_geojson(path, transform, crs, original_crs, args.output_dir / "path.geojson")
-    _write_cost_surface_plot(elevation, slope_deg, slope_pct, acc_arr, path, args.output_dir / "cost_surface.png")
-    _write_profile_plot(elevation, slope_pct, path, transform, args.output_dir / "profile.png")
-
-    rows = [r for r, _ in path]
-    cols = [c for _, c in path]
-    slope_profile = slope_pct[rows, cols]
-    crossings = _path_diagnostics(path, fdir_arr, channel_pen)
-    elevation_drop = float(elevation[rows[0], cols[0]] - elevation[rows[-1], cols[-1]])
-
-    _write_report(
-        args.output_dir / "report.md", args.mode, length_m, path_cost, slope_profile, crossings, elevation_drop, args
+    _write_geojson(result.path_lonlat, result.length_m, result.original_crs, result.crs, args.output_dir / "path.geojson")
+    _write_cost_surface_plot(
+        result.elevation, result.slope_deg, result.slope_pct, result.acc_arr, result.path_rc,
+        args.output_dir / "cost_surface.png",
     )
+    _write_profile_plot(
+        result.elevation, result.slope_pct, result.path_rc, result.transform, args.output_dir / "profile.png"
+    )
+    _write_report(args.output_dir / "report.md", args.mode, result, args)
 
     config = {k: (str(v) if isinstance(v, Path) else v) for k, v in vars(args).items()}
     (args.output_dir / "run_config.json").write_text(json.dumps(config, indent=2))
 
-    print(f"Route: {len(path)} cells, {length_m:.1f} m, cost {path_cost:.2f}")
+    print(f"Route: {len(result.path_rc)} cells, {result.length_m:.1f} m, cost {result.cost:.2f}")
     print(f"Outputs written to {args.output_dir}")
 
 
