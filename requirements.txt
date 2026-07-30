@@ -6,3 +6,4 @@ shapely
 pyproj
 matplotlib
 numpy
+pytest
