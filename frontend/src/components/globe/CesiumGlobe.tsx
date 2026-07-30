@@ -95,11 +95,6 @@ export default function CesiumGlobe({
         viewer.scene.skyAtmosphere.show = true;
       }
 
-      // The globe is a fixed, viewport-filling background layer sitting under real
-      // page content, so mouse-wheel scroll needs to scroll the page -- not zoom the
-      // camera (Cesium's default). Left-drag-to-rotate stays on.
-      viewer.scene.screenSpaceCameraController.enableZoom = false;
-
       viewer.camera.setView({
         destination: Cesium.Cartesian3.fromDegrees(12, 18, 22_000_000),
       });
@@ -131,6 +126,25 @@ export default function CesiumGlobe({
       canvas.addEventListener("pointerdown", pause);
       canvas.addEventListener("pointerup", resume);
       canvas.addEventListener("wheel", pause, { passive: true });
+
+      // The globe canvas is a huge fixed rectangle (203vh) that mostly covers empty
+      // space around the visible sphere, sitting over real scrollable page content.
+      // Only let wheel zoom the globe when the cursor is actually over the planet;
+      // everywhere else on the canvas, let the wheel event through to scroll the page.
+      // Runs in the capture phase so it fires before Cesium's own wheel handler.
+      const wheelGate = (event: WheelEvent) => {
+        const rect = canvas.getBoundingClientRect();
+        const x = event.clientX - rect.left;
+        const y = event.clientY - rect.top;
+        const overGlobe = viewer.camera.pickEllipsoid(
+          new Cesium.Cartesian2(x, y),
+          viewer.scene.globe.ellipsoid
+        );
+        if (!overGlobe) {
+          event.stopImmediatePropagation();
+        }
+      };
+      canvas.addEventListener("wheel", wheelGate, { capture: true });
 
       let lastTime = performance.now();
       const tick = () => {

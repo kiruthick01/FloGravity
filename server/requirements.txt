@@ -1,0 +1,12 @@
+fastapi
+uvicorn[standard]
+httpx
+pydantic
+rasterio
+scipy
+scikit-image
+pysheds
+shapely
+pyproj
+matplotlib
+numpy
