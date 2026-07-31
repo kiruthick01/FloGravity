@@ -1,0 +1,16 @@
+frontend/
+sample_data/
+outputs/
+docs/
+tests/
+.git/
+.pytest_cache/
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+.DS_Store
+server/.env
+project_prompts.md
+README.md
