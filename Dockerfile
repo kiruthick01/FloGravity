@@ -1,8 +1,15 @@
-# Backend service (server/) for Cloud Run. Built from the repo root so it can
-# COPY the drainage_lcp package alongside server/.
+# Backend service (server/) for Render/Cloud Run. Built from the repo root so
+# it can COPY the drainage_lcp package alongside server/.
 FROM python:3.11-slim
 
 WORKDIR /app
+
+# rasterio's wheel bundles GDAL statically but that bundled GDAL still
+# dynamically links a few system libs the slim base image strips out.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libexpat1 \
+    libsqlite3-0 \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY server/requirements.txt server/requirements.txt
 RUN pip install --no-cache-dir -r server/requirements.txt
