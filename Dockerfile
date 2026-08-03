@@ -18,6 +18,12 @@ COPY drainage_lcp/ drainage_lcp/
 COPY server/ server/
 
 ENV PYTHONUNBUFFERED=1
+# pysheds' conditioning routines are numba-jitted. LLVM JIT compilation on
+# first call needs its own real memory allocation on top of the DEM arrays
+# already in memory -- on a 512MB container that spike alone can OOM the
+# process even for a small DEM. Disabling JIT falls back to numba's plain
+# Python/numpy execution of the same code (slower, but no compile spike).
+ENV NUMBA_DISABLE_JIT=1
 
 # Cloud Run sets $PORT at runtime (defaults to 8080); shell form so it expands.
 CMD ["sh", "-c", "uvicorn server.main:app --host 0.0.0.0 --port ${PORT:-8080}"]

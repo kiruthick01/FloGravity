@@ -9,9 +9,12 @@ DEFAULT_DATASET = "SRTMGL1"  # 30m global coverage
 
 # Padding around the start/end points, and a hard cap so one request can't
 # pull an unreasonably large area (cost/latency/OpenTopography area limits).
+# Kept small because container memory is the binding constraint on the free
+# deployment tier, not OpenTopography's own limits -- DEM array size (and
+# pysheds' peak memory while conditioning it) scales with the square of this.
 PAD_FRACTION = 0.25
 MIN_PAD_DEG = 0.05
-MAX_SPAN_DEG = 1.5
+MAX_SPAN_DEG = 0.5
 
 
 def compute_padded_bbox(start_lonlat, end_lonlat):

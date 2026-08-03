@@ -7,7 +7,11 @@ import numpy as np
 
 def compute_slope(elevation, cellsize_m, nodata_mask=None):
     """Return (slope_deg, slope_pct), same shape as elevation, nodata -> nan."""
-    elev = elevation.astype(np.float64)
+    # float32 (not float64): halves memory for these DEM-sized arrays, which
+    # matters on memory-constrained deployment targets (512MB free-tier
+    # containers). Slope precision loss at float32 is well below anything
+    # that affects routing decisions.
+    elev = elevation.astype(np.float32)
     if nodata_mask is not None:
         elev = np.where(nodata_mask, np.nan, elev)
 
@@ -30,7 +34,7 @@ def compute_aspect(elevation, cellsize_m, nodata_mask=None):
     eastward, so the raw np.gradient outputs need a sign flip on the y-axis to
     get a true north-positive component before converting to a compass bearing.
     """
-    elev = elevation.astype(np.float64)
+    elev = elevation.astype(np.float32)
     if nodata_mask is not None:
         elev = np.where(nodata_mask, np.nan, elev)
 

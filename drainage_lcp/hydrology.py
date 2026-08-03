@@ -1,5 +1,6 @@
 """Hydrological derivatives: DEM conditioning, D8 flow direction, flow accumulation."""
 
+import gc
 from pathlib import Path
 
 import numpy as np
@@ -23,16 +24,29 @@ def compute_hydrology(elevation, transform, crs, nodata_mask):
     dem = Raster(dem_arr, viewfinder=viewfinder)
     grid = Grid(viewfinder=viewfinder)
 
-    # Conditioning order matters: pits, then depressions, then flats.
+    # Conditioning order matters: pits, then depressions, then flats. pysheds
+    # forces float64 internally regardless of our input dtype, and each stage
+    # holds a full DEM-sized copy -- del + gc.collect() as we go so at most
+    # two conditioning copies are ever resident at once, not four.
     pit_filled = grid.fill_pits(dem)
+    del dem
     flooded = grid.fill_depressions(pit_filled)
+    del pit_filled
     inflated = grid.resolve_flats(flooded)
+    del flooded
+    gc.collect()
 
     fdir = grid.flowdir(inflated, dirmap=DIRMAP)
+    del inflated
     acc = grid.accumulation(fdir, dirmap=DIRMAP)
+    gc.collect()
 
-    fdir_arr = np.asarray(fdir)
-    acc_arr = np.asarray(acc)
+    # fdir values are one of 8 small direction codes (max 255); acc is a cell
+    # count that fits comfortably in float32 for any DEM this project fetches.
+    fdir_arr = np.asarray(fdir).astype(np.int16)
+    acc_arr = np.asarray(acc).astype(np.float32)
+    del fdir, acc
+    gc.collect()
 
     if fdir_arr.shape != elevation.shape or acc_arr.shape != elevation.shape:
         raise ValueError(

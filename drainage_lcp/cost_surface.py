@@ -10,7 +10,7 @@ IMPASSABLE_COST = 1e6
 
 def compute_channel_penalty(acc, nodata_mask=None):
     """log1p(flow accumulation), min-max normalized to [0, 1]. nodata -> nan."""
-    log_acc = np.log1p(np.clip(acc, a_min=0, a_max=None).astype(np.float64))
+    log_acc = np.log1p(np.clip(acc, a_min=0, a_max=None).astype(np.float32))
     valid = ~nodata_mask if nodata_mask is not None else np.ones_like(acc, dtype=bool)
 
     lo = log_acc[valid].min()
@@ -28,7 +28,7 @@ def compute_channel_penalty(acc, nodata_mask=None):
 
 def compute_slope_penalty(slope_pct, min_slope_pct=0.5, max_slope_pct=15.0, hard_max_slope_pct=45.0):
     """0 inside [min, max] band, linear penalty outside it, IMPASSABLE_COST beyond hard max."""
-    penalty = np.zeros_like(slope_pct, dtype=np.float64)
+    penalty = np.zeros_like(slope_pct, dtype=np.float32)
 
     below = slope_pct < min_slope_pct
     denom_below = max(min_slope_pct, 1e-6)
