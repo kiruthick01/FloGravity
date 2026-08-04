@@ -18,12 +18,14 @@ COPY drainage_lcp/ drainage_lcp/
 COPY server/ server/
 
 ENV PYTHONUNBUFFERED=1
-# pysheds' conditioning routines are numba-jitted. LLVM JIT compilation on
-# first call needs its own real memory allocation on top of the DEM arrays
-# already in memory -- on a 512MB container that spike alone can OOM the
-# process even for a small DEM. Disabling JIT falls back to numba's plain
-# Python/numpy execution of the same code (slower, but no compile spike).
-ENV NUMBA_DISABLE_JIT=1
+# NUMBA_DISABLE_JIT=1 was tried here to fight an earlier OOM crash: it avoids
+# numba's LLVM JIT compile-time memory spike, but makes pysheds' conditioning
+# routines run as plain Python loops -- ~4.5 minutes for a single route on
+# Render's free CPU, unusably slow for a live request. Left at numba's default
+# (JIT enabled) now that the real fix -- float32 arrays + freeing pysheds'
+# intermediate copies in hydrology.py -- already cuts peak memory ~29% on its
+# own; re-test the Render event log for OOM after deploying this if routes
+# start failing again, since disabling JIT is still the fallback if needed.
 
 # Cloud Run sets $PORT at runtime (defaults to 8080); shell form so it expands.
 CMD ["sh", "-c", "uvicorn server.main:app --host 0.0.0.0 --port ${PORT:-8080}"]

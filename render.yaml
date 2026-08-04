@@ -12,5 +12,3 @@ services:
         value: http://localhost:3000
       - key: PYTHON_VERSION
         value: 3.11.9
-      - key: NUMBA_DISABLE_JIT
-        value: "1"
