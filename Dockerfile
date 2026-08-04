@@ -18,14 +18,18 @@ COPY drainage_lcp/ drainage_lcp/
 COPY server/ server/
 
 ENV PYTHONUNBUFFERED=1
-# NUMBA_DISABLE_JIT=1 was tried here to fight an earlier OOM crash: it avoids
-# numba's LLVM JIT compile-time memory spike, but makes pysheds' conditioning
-# routines run as plain Python loops -- ~4.5 minutes for a single route on
-# Render's free CPU, unusably slow for a live request. Left at numba's default
-# (JIT enabled) now that the real fix -- float32 arrays + freeing pysheds'
-# intermediate copies in hydrology.py -- already cuts peak memory ~29% on its
-# own; re-test the Render event log for OOM after deploying this if routes
-# start failing again, since disabling JIT is still the fallback if needed.
+# Confirmed via two real Render deploys, not just local measurement: with JIT
+# enabled, even after the float32/gc memory fixes (which measured 301MB peak
+# locally, comfortably under the 512MB cap), the instance still OOM-crashed
+# in production ("Ran out of memory (used over 512MB)" in the Render event
+# log). Local numbers on this arm64 dev machine don't reliably predict
+# Render's actual x86_64 container's memory behavior around numba's JIT
+# compile spike. Disabling JIT is the only configuration that has actually
+# succeeded end-to-end on the real deployment (confirmed HTTP 200 with
+# correct route data) -- slow (~4.5 min/request on free-tier CPU), but
+# correct and stable. A paid tier with more RAM would be needed to get both
+# speed and JIT enabled; not worth it for a portfolio deployment.
+ENV NUMBA_DISABLE_JIT=1
 
 # Cloud Run sets $PORT at runtime (defaults to 8080); shell form so it expands.
 CMD ["sh", "-c", "uvicorn server.main:app --host 0.0.0.0 --port ${PORT:-8080}"]
