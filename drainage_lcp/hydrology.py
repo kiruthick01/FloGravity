@@ -7,6 +7,13 @@ import numpy as np
 from pysheds.grid import Grid
 from pysheds.sview import Raster, ViewFinder
 
+# pysheds' accumulation() still calls the long-deprecated np.in1d, which newer
+# numpy releases (the resolved version can drift between environments since
+# neither we nor pysheds pin it) have removed outright -- np.isin is a drop-in
+# replacement for the two-positional-arg form pysheds uses.
+if not hasattr(np, "in1d"):
+    np.in1d = np.isin
+
 # ESRI D8 direction codes, in (N, NE, E, SE, S, SW, W, NW) order.
 DIRMAP = (64, 128, 1, 2, 4, 8, 16, 32)
 
