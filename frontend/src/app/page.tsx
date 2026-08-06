@@ -7,8 +7,11 @@ export default function Home() {
     <RouteToolProvider>
       <main className="relative flex min-h-screen flex-col">
         {/* Globe sits off-center, bleeding past the right/bottom edge of the viewport.
-            `fixed` so it always fills the viewport regardless of page scroll height. */}
-        <div className="fixed -right-[27vw] top-1/2 h-[203vh] w-[203vh] -translate-y-1/2">
+            `fixed` so it always fills the viewport regardless of page scroll height.
+            Sized down from an earlier 203vh: most of that area rendered off-screen
+            and never seen, which was pure wasted GPU framebuffer pixels contributing
+            to a real crash on integrated graphics. */}
+        <div className="fixed -right-[18vw] top-1/2 h-[135vh] w-[135vh] -translate-y-1/2">
           <GlobeBackground />
         </div>
 

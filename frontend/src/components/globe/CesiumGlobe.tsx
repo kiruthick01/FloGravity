@@ -84,6 +84,15 @@ export default function CesiumGlobe({
         fullscreenButton: false,
         infoBox: false,
         selectionIndicator: false,
+        // MSAA antialiasing multiplies framebuffer memory 2-4x for a canvas
+        // this large; low-power avoids forcing a discrete-GPU switch. Both are
+        // real, standard WebGL memory/power levers, not cosmetic settings.
+        contextOptions: {
+          webgl: {
+            antialias: false,
+            powerPreference: "low-power",
+          },
+        },
       });
 
       if (cancelled) {
