@@ -64,9 +64,13 @@ export default function CesiumGlobe({
     let resumeTimer: ReturnType<typeof setTimeout> | undefined;
 
     async function init() {
-      const terrain = Cesium.Terrain.fromWorldTerrain({
-        requestVertexNormals: true,
-      });
+      // requestVertexNormals triples terrain mesh memory to support per-vertex
+      // lighting -- pointless here since enableLighting is off below, and this
+      // combined with an uncapped-resolution 203vh canvas was crashing the
+      // renderer/GPU process on real hardware (confirmed: Chrome's tab-crashed
+      // page, not a caught JS error) once the actual JS-syntax bug that had
+      // been silently preventing Cesium from ever initializing was fixed.
+      const terrain = Cesium.Terrain.fromWorldTerrain();
 
       const viewer = new Cesium.Viewer(containerRef.current as HTMLDivElement, {
         terrain,
@@ -88,6 +92,13 @@ export default function CesiumGlobe({
       }
       viewerRef.current = viewer;
       geocoderRef.current = new Cesium.IonGeocoderService({ scene: viewer.scene });
+
+      // Cap the GPU framebuffer resolution instead of rendering at full device
+      // pixel ratio. The hero globe's canvas is huge (203vh) purely for visual
+      // bleed off-screen; at 2x devicePixelRatio (any Retina/HiDPI display)
+      // that's a 4x larger framebuffer than necessary and was a large part of
+      // what pushed this over the edge on integrated GPUs.
+      viewer.resolutionScale = Math.min(window.devicePixelRatio, 1);
 
       // Sun-based day/night lighting looks realistic but leaves half the globe
       // permanently dark for a product UI where every location should read clearly.
