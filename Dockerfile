@@ -1,6 +1,6 @@
 # Backend service (server/) for Render/Cloud Run. Built from the repo root so
 # it can COPY the drainage_lcp package alongside server/.
-FROM python:3.11-slim
+FROM python:3.14-slim
 
 WORKDIR /app
 
